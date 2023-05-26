@@ -50,6 +50,10 @@ For example, if you want to change the manifest branch, you can simply run
 For more documentation on the manifest format, including the local_manifests
 support, see the [manifest-format.md] file.
 
+*   `submanifests/{submanifest.path}/`: The path prefix to the manifest state of
+    a submanifest included in a multi-manifest checkout.  The outermost manifest
+    manifest state is found adjacent to `submanifests/`.
+
 *   `manifests/`: A git checkout of the manifest project.  Its `.git/` state
     points to the `manifest.git` bare checkout (see below).  It tracks the git
     branch specified at `repo init` time via `--manifest-branch`.
@@ -93,6 +97,25 @@ support, see the [manifest-format.md] file.
 
 ### Project objects
 
+*** note
+**Warning**: Please do not use repo's approach to projects/ & project-objects/
+layouts as a model for other tools to implement similar approaches.
+It has a number of known downsides like:
+*   [Symlinks do not work well under Windows](./windows.md).
+*   Git sometimes replaces symlinks under .git/ with real files (under unknown
+    circumstances), and then the internal state gets out of sync, and data loss
+    may ensue.
+*   When sharing project-objects between multiple project checkouts, Git might
+    automatically run `gc` or `prune` which may lead to data loss or corruption
+    (since those operate on leaf projects and miss refs in other leaves).  See
+    https://gerrit-review.googlesource.com/c/git-repo/+/254392 for more details.
+
+Instead, you should use standard Git workflows like [git worktree] or
+[gitsubmodules] with [superprojects].
+***
+
+*   `copy-link-files.json`: Tracking file used by `repo sync` to determine when
+    copyfile or linkfile are added or removed and need corresponding updates.
 *   `project.list`: Tracking file used by `repo sync` to determine when projects
     are added or removed and need corresponding updates in the checkout.
 *   `projects/`: Bare checkouts of every project synced by the manifest.  The
@@ -106,7 +129,7 @@ support, see the [manifest-format.md] file.
     setting in the manifest (i.e. the path on the remote server) with a `.git`
     suffix.  This allows for multiple checkouts of the same remote git repo to
     share their objects.  For example, you could have different branches of
-    `foo/bar.git` checked out to `foo/bar-master`, `foo/bar-release`, etc...
+    `foo/bar.git` checked out to `foo/bar-main`, `foo/bar-release`, etc...
     There will be multiple trees under `projects/` for each one, but only one
     under `project-objects/`.
 
@@ -121,32 +144,42 @@ support, see the [manifest-format.md] file.
     (i.e. the path on the remote server) with a `.git` suffix.  This has the
     same advantages as the `project-objects/` layout above.
 
-    This is used when git worktrees are enabled.
+    This is used when [git worktree]'s are enabled.
 
 ### Global settings
 
 The `.repo/manifests.git/config` file is used to track settings for the entire
 repo client checkout.
+
 Most settings use the `[repo]` section to avoid conflicts with git.
+
+Everything under `[repo.syncstate.*]` is used to keep track of sync details for logging
+purposes.
+
 User controlled settings are initialized when running `repo init`.
 
-| Setting           | `repo init` Option        | Use/Meaning |
-|-------------------|---------------------------|-------------|
-| manifest.groups   | `--groups` & `--platform` | The manifest groups to sync |
-| repo.archive      | `--archive`               | Use `git archive` for checkouts |
-| repo.clonebundle  | `--clone-bundle`          | Whether the initial sync used clone.bundle explicitly |
-| repo.clonefilter  | `--clone-filter`          | Filter setting when using [partial git clones] |
-| repo.depth        | `--depth`                 | Create shallow checkouts when cloning |
-| repo.dissociate   | `--dissociate`            | Dissociate from any reference/mirrors after initial clone |
-| repo.mirror       | `--mirror`                | Checkout is a repo mirror |
-| repo.partialclone | `--partial-clone`         | Create [partial git clones] |
-| repo.reference    | `--reference`             | Reference repo client checkout |
-| repo.submodules   | `--submodules`            | Sync git submodules |
-| repo.worktree     | `--worktree`              | Use `git worktree` for checkouts |
-| user.email        | `--config-name`           | User's e-mail address; Copied into `.git/config` when checking out a new project |
-| user.name         | `--config-name`           | User's name; Copied into `.git/config` when checking out a new project |
+| Setting                  | `repo init` Option        | Use/Meaning |
+|-------------------       |---------------------------|-------------|
+| manifest.groups          | `--groups` & `--platform` | The manifest groups to sync |
+| manifest.standalone      | `--standalone-manifest`   | Download manifest as static file instead of creating checkout |
+| repo.archive             | `--archive`               | Use `git archive` for checkouts |
+| repo.clonebundle         | `--clone-bundle`          | Whether the initial sync used clone.bundle explicitly |
+| repo.clonefilter         | `--clone-filter`          | Filter setting when using [partial git clones] |
+| repo.depth               | `--depth`                 | Create shallow checkouts when cloning |
+| repo.dissociate          | `--dissociate`            | Dissociate from any reference/mirrors after initial clone |
+| repo.git-lfs             | `--git-lfs`               | Enable [Git LFS] support |
+| repo.mirror              | `--mirror`                | Checkout is a repo mirror |
+| repo.partialclone        | `--partial-clone`         | Create [partial git clones] |
+| repo.partialcloneexclude | `--partial-clone-exclude` | Comma-delimited list of project names (not paths) to exclude while using [partial git clones] |
+| repo.reference           | `--reference`             | Reference repo client checkout |
+| repo.submodules          | `--submodules`            | Sync git submodules |
+| repo.superproject        | `--use-superproject`      | Sync [superproject] |
+| repo.worktree            | `--worktree`              | Use [git worktree] for checkouts |
+| user.email               | `--config-name`           | User's e-mail address; Copied into `.git/config` when checking out a new project |
+| user.name                | `--config-name`           | User's name; Copied into `.git/config` when checking out a new project |
 
 [partial git clones]: https://git-scm.com/docs/gitrepository-layout#_code_partialclone_code
+[superproject]: https://en.wikibooks.org/wiki/Git/Submodules_and_Superprojects
 
 ### Repo hooks settings
 
@@ -189,27 +222,30 @@ The `[remote]` settings are automatically populated/updated from the manifest.
 
 The `[branch]` settings are updated by `repo start` and `git branch`.
 
-| Setting                       | Subcommands   | Use/Meaning |
-|-------------------------------|---------------|-------------|
-| review.\<url\>.autocopy       | upload        | Automatically add to `--cc=<value>` |
-| review.\<url\>.autoreviewer   | upload        | Automatically add to `--reviewers=<value>` |
-| review.\<url\>.autoupload     | upload        | Automatically answer "yes" or "no" to all prompts |
-| review.\<url\>.uploadhashtags | upload        | Automatically add to `--hashtag=<value>` |
-| review.\<url\>.uploadlabels   | upload        | Automatically add to `--label=<value>` |
-| review.\<url\>.uploadnotify   | upload        | [Notify setting][upload-notify] to use |
-| review.\<url\>.uploadtopic    | upload        | Default [topic] to use |
-| review.\<url\>.username       | upload        | Override username with `ssh://` review URIs |
-| remote.\<remote\>.fetch       | sync          | Set of refs to fetch |
-| remote.\<remote\>.projectname | \<network\>   | The name of the project as it exists in Gerrit review |
-| remote.\<remote\>.pushurl     | upload        | The base URI for pushing CLs |
-| remote.\<remote\>.review      | upload        | The URI of the Gerrit review server |
-| remote.\<remote\>.url         | sync & upload | The URI of the git project to fetch |
-| branch.\<branch\>.merge       | sync & upload | The branch to merge & upload & track |
-| branch.\<branch\>.remote      | sync & upload | The remote to track |
+| Setting                               | Subcommands   | Use/Meaning |
+|---------------------------------------|---------------|-------------|
+| review.\<url\>.autocopy               | upload        | Automatically add to `--cc=<value>` |
+| review.\<url\>.autoreviewer           | upload        | Automatically add to `--reviewers=<value>` |
+| review.\<url\>.autoupload             | upload        | Automatically answer "yes" or "no" to all prompts |
+| review.\<url\>.uploadhashtags         | upload        | Automatically add to `--hashtag=<value>` |
+| review.\<url\>.uploadlabels           | upload        | Automatically add to `--label=<value>` |
+| review.\<url\>.uploadnotify           | upload        | [Notify setting][upload-notify] to use |
+| review.\<url\>.uploadtopic            | upload        | Default [topic] to use |
+| review.\<url\>.uploadwarningthreshold | upload        | Warn when attempting to upload more than this many CLs |
+| review.\<url\>.username               | upload        | Override username with `ssh://` review URIs |
+| remote.\<remote\>.fetch               | sync          | Set of refs to fetch |
+| remote.\<remote\>.projectname         | \<network\>   | The name of the project as it exists in Gerrit review |
+| remote.\<remote\>.pushurl             | upload        | The base URI for pushing CLs |
+| remote.\<remote\>.review              | upload        | The URI of the Gerrit review server |
+| remote.\<remote\>.url                 | sync & upload | The URI of the git project to fetch |
+| branch.\<branch\>.merge               | sync & upload | The branch to merge & upload & track |
+| branch.\<branch\>.remote              | sync & upload | The remote to track |
 
 ## ~/ dotconfig layout
 
-Repo will create & maintain a few files in the user's home directory.
+Repo will create & maintain a few files under the `.repoconfig/` directory.
+This is placed in the user's home directory by default but can be changed by
+setting `REPO_CONFIG_DIR`.
 
 *   `.repoconfig/`: Repo's per-user directory for all random config files/state.
 *   `.repoconfig/config`: Per-user settings using [git-config] file format.
@@ -226,7 +262,11 @@ Repo will create & maintain a few files in the user's home directory.
 
 
 [git-config]: https://git-scm.com/docs/git-config
+[Git LFS]: https://git-lfs.github.com/
+[git worktree]: https://git-scm.com/docs/git-worktree
+[gitsubmodules]: https://git-scm.com/docs/gitsubmodules
 [manifest-format.md]: ./manifest-format.md
 [local manifests]: ./manifest-format.md#Local-Manifests
+[superprojects]: https://en.wikibooks.org/wiki/Git/Submodules_and_Superprojects
 [topic]: https://gerrit-review.googlesource.com/Documentation/intro-user.html#topics
 [upload-notify]: https://gerrit-review.googlesource.com/Documentation/user-upload.html#notify

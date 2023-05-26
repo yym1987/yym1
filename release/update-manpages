@@ -1,6 +1,5 @@
-# -*- coding:utf-8 -*-
-#
-# Copyright (C) 2013 The Android Open Source Project
+#!/usr/bin/env python3
+# Copyright (C) 2021 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,8 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Helper tool for generating manual page for all repo commands.
+
+This is intended to be run before every official Repo release.
+"""
+
 import sys
 
+import update_manpages
 
-def is_python3():
-  return sys.version_info[0] == 3
+sys.exit(update_manpages.main(sys.argv[1:]))
